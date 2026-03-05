@@ -1,5 +1,6 @@
 // ============================================================
 // Gig Service — Create, Read, Deactivate gigs from Firestore
+// + Fetch from Render backend API
 // ============================================================
 import {
   collection,
@@ -14,6 +15,7 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { apiFetch } from "@/lib/api";
 
 export interface Gig {
   id: string;
@@ -48,13 +50,43 @@ export async function createGig(data: {
   return docRef.id;
 }
 
+// ---- Fetch gigs from Render backend API ----
+async function fetchBackendGigs(): Promise<Gig[]> {
+  try {
+    const data = await apiFetch<{ title: string; budget: number }[]>("/gigs");
+    return data.map((g, i) => ({
+      id: `backend-${i}`,
+      title: g.title,
+      description: "",
+      category: "Other",
+      budget: g.budget,
+      deadline: "",
+      skillsRequired: "",
+      postedBy: "",
+      postedByName: "KaiGig Backend",
+      active: true,
+      createdAt: null,
+    }));
+  } catch (err) {
+    console.warn("Backend API unreachable, using Firebase only:", err);
+    return [];
+  }
+}
+
 // ---- Get all active gigs (newest first) — for public browse ----
+// Merges Firebase gigs with backend API gigs
 export async function getAllGigs(): Promise<Gig[]> {
-  const snapshot = await getDocs(collection(db, "gigs"));
-  const gigs = snapshot.docs
-    .map((d) => ({ id: d.id, active: true, ...d.data() } as Gig))
-    .filter((g) => g.active !== false); // hide deactivated
-  return gigs.sort((a, b) => {
+  const [firebaseGigs, backendGigs] = await Promise.all([
+    getDocs(collection(db, "gigs")).then((snapshot) =>
+      snapshot.docs
+        .map((d) => ({ id: d.id, active: true, ...d.data() } as Gig))
+        .filter((g) => g.active !== false)
+    ),
+    fetchBackendGigs(),
+  ]);
+
+  const allGigs = [...firebaseGigs, ...backendGigs];
+  return allGigs.sort((a, b) => {
     const aTime = a.createdAt?.seconds ?? 0;
     const bTime = b.createdAt?.seconds ?? 0;
     return bTime - aTime;
